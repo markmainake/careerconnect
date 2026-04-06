@@ -762,26 +762,28 @@
           <button class="pay-tab" onclick="switchTab('paypal')">PayPal / Card</button>
         </div>
 
-        <!-- M-PESA PANEL — STK Push -->
+        <!-- M-PESA PANEL — Manual code entry -->
         <div id="tab-mpesa" class="pay-panel">
           <div class="mpesa-till-card">
             <div class="mpesa-till-label">Buy Goods · Till Number</div>
             <div class="mpesa-till-num">6901759</div>
             <div class="mpesa-till-sub">CareerConnect · KES 260</div>
           </div>
-          <div class="mpesa-note" style="margin-bottom:0.75rem;">Enter your Safaricom number below. We'll send a payment prompt directly to your phone — no need to open M-Pesa manually.</div>
-          <div style="margin-top:0.5rem;">
-            <label class="form-label">Your Safaricom number</label>
+          <div class="mpesa-steps">
+            <div class="mpesa-step"><span class="mpesa-num">1</span><span>Open <strong>M-Pesa</strong> → Lipa na M-Pesa → Buy Goods &amp; Services</span></div>
+            <div class="mpesa-step"><span class="mpesa-num">2</span><span>Till Number: <strong class="mpesa-code">6901759</strong></span></div>
+            <div class="mpesa-step"><span class="mpesa-num">3</span><span>Amount: <strong class="mpesa-code">KES 260</strong></span></div>
+            <div class="mpesa-step"><span class="mpesa-num">4</span><span>Enter your M-Pesa PIN &amp; send</span></div>
+          </div>
+          <div class="mpesa-note">You'll receive an SMS like: <em>"Confirmed. KGH3X2ABC1 sent to CareerConnect..."</em> — enter that code below.</div>
+          <div style="margin-top:0.75rem;">
+            <label class="form-label">M-Pesa confirmation code</label>
             <div class="pay-code-row">
-              <input type="tel" class="pay-code-input" id="mpesa-phone" placeholder="e.g. 0712 345 678" maxlength="13" style="text-transform:none;" />
-              <button class="pay-code-btn" id="mpesa-stk-btn" onclick="initSTKPush()">Pay Now</button>
+              <input type="text" class="pay-code-input" id="mpesa-code" placeholder="e.g. KGH3X2ABC1" maxlength="14" />
+              <button class="pay-code-btn" id="mpesa-verify-btn" onclick="verifyMpesa()">Verify</button>
             </div>
-            <div class="pay-error" id="mpesa-error"></div>
-            <div id="mpesa-checking" style="display:none;font-size:0.82rem;color:var(--teal);margin-top:8px;line-height:1.6;">
-              <strong>Check your phone!</strong> Enter your M-Pesa PIN to complete payment.<br>
-              <span style="color:var(--muted);">Waiting for confirmation...</span>
-              <div class="jobs-spinner" style="margin-top:6px;"></div>
-            </div>
+            <div class="pay-error" id="mpesa-error">Code not recognised. Double-check your SMS or contact us.</div>
+            <div id="mpesa-checking" style="display:none;font-size:0.78rem;color:var(--teal);margin-top:6px;">Checking...</div>
           </div>
         </div>
 
@@ -1031,90 +1033,90 @@
     document.getElementById('tab-paypal').style.display = tab==='paypal' ? 'block' : 'none';
   }
 
-  // ── STK Push & Payment Polling ────────────────────────────
-  // Update this URL once Render gives you your server URL
+  // ── M-Pesa real code verification ─────────────────────────
   const SERVER_URL = 'https://careerconnect-server-production.up.railway.app';
 
-  let pollInterval = null;
-
-  async function initSTKPush() {
-    const phone  = document.getElementById('mpesa-phone').value.trim();
+  async function verifyMpesa() {
+    const raw    = document.getElementById('mpesa-code').value.trim().toUpperCase();
     const errEl  = document.getElementById('mpesa-error');
-    const btn    = document.getElementById('mpesa-stk-btn');
-    const check  = document.getElementById('mpesa-checking');
+    const checkEl = document.getElementById('mpesa-checking');
+    const btn    = document.getElementById('mpesa-verify-btn');
 
     errEl.style.display = 'none';
 
-    if (!phone) {
+    if (raw.length < 8) {
       errEl.style.display = 'block';
-      errEl.textContent = 'Please enter your Safaricom number.';
+      errEl.textContent = 'Please enter your full M-Pesa transaction code.';
       return;
     }
 
     btn.disabled = true;
-    btn.textContent = 'Sending...';
+    btn.textContent = 'Verifying...';
+    checkEl.style.display = 'block';
+    checkEl.textContent = 'Checking with Safaricom...';
 
     try {
-      const res  = await fetch(`${SERVER_URL}/mpesa/stkpush`, {
+      const res  = await fetch(`${SERVER_URL}/mpesa/verify-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone })
+        body: JSON.stringify({ code: raw })
       });
       const data = await res.json();
 
-      if (data.success) {
-        check.style.display = 'block';
-        btn.textContent = 'Waiting...';
-        // Poll every 3 seconds until confirmed or failed
-        pollPayment(data.checkoutRequestId);
-      } else {
+      if (!data.success) {
+        checkEl.style.display = 'none';
         errEl.style.display = 'block';
-        errEl.textContent = data.error || 'Could not send payment request. Try again.';
+        errEl.textContent = data.error || 'Code not recognised. Check your SMS and try again.';
         btn.disabled = false;
-        btn.textContent = 'Pay Now';
+        btn.textContent = 'Verify';
+        return;
       }
+
+      // If instantly verified (sandbox fallback)
+      if (data.verified) {
+        checkEl.style.display = 'none';
+        unlockUpload();
+        return;
+      }
+
+      // Poll for confirmation from Daraja callback
+      checkEl.textContent = 'Confirming payment... please wait.';
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const r = await fetch(`${SERVER_URL}/mpesa/code-status/${raw}`);
+          const d = await r.json();
+
+          if (d.status === 'confirmed') {
+            clearInterval(poll);
+            checkEl.style.display = 'none';
+            unlockUpload();
+          } else if (d.status === 'failed') {
+            clearInterval(poll);
+            checkEl.style.display = 'none';
+            errEl.style.display = 'block';
+            errEl.textContent = 'Payment not found or amount incorrect. Contact us if you believe this is an error.';
+            btn.disabled = false;
+            btn.textContent = 'Verify';
+          } else if (attempts >= 15) {
+            clearInterval(poll);
+            checkEl.style.display = 'none';
+            errEl.style.display = 'block';
+            errEl.textContent = 'Verification timed out. Please try again or contact careerconnect612@gmail.com';
+            btn.disabled = false;
+            btn.textContent = 'Verify';
+          }
+        } catch(e) { /* keep polling */ }
+      }, 3000);
+
     } catch(e) {
+      checkEl.style.display = 'none';
       errEl.style.display = 'block';
       errEl.textContent = 'Server unreachable. Please try again or contact us.';
       btn.disabled = false;
-      btn.textContent = 'Pay Now';
+      btn.textContent = 'Verify';
     }
-  }
-
-  function pollPayment(checkoutRequestId) {
-    clearInterval(pollInterval);
-    let attempts = 0;
-    pollInterval = setInterval(async () => {
-      attempts++;
-      try {
-        const res  = await fetch(`${SERVER_URL}/mpesa/status/${checkoutRequestId}`);
-        const data = await res.json();
-
-        if (data.status === 'confirmed') {
-          clearInterval(pollInterval);
-          document.getElementById('mpesa-checking').style.display = 'none';
-          unlockUpload();
-        } else if (data.status === 'failed') {
-          clearInterval(pollInterval);
-          document.getElementById('mpesa-checking').style.display = 'none';
-          const errEl = document.getElementById('mpesa-error');
-          errEl.style.display = 'block';
-          errEl.textContent = 'Payment was cancelled or failed. Please try again.';
-          const btn = document.getElementById('mpesa-stk-btn');
-          btn.disabled = false;
-          btn.textContent = 'Pay Now';
-        } else if (data.status === 'expired' || attempts >= 20) {
-          clearInterval(pollInterval);
-          document.getElementById('mpesa-checking').style.display = 'none';
-          const errEl = document.getElementById('mpesa-error');
-          errEl.style.display = 'block';
-          errEl.textContent = 'Payment timed out. Please try again.';
-          const btn = document.getElementById('mpesa-stk-btn');
-          btn.disabled = false;
-          btn.textContent = 'Pay Now';
-        }
-      } catch(e) { /* keep polling */ }
-    }, 3000);
   }
 
   // ── PayPal code verification ───────────────────────────────
