@@ -1033,14 +1033,13 @@
     document.getElementById('tab-paypal').style.display = tab==='paypal' ? 'block' : 'none';
   }
 
-  // ── M-Pesa real code verification ─────────────────────────
-  const SERVER_URL = 'https://careerconnect-server-production.up.railway.app';
-
-  async function verifyMpesa() {
-    const raw    = document.getElementById('mpesa-code').value.trim().toUpperCase();
-    const errEl  = document.getElementById('mpesa-error');
+  // ── M-Pesa demo verification ───────────────────────────────
+  const usedMpesa = new Set();
+  function verifyMpesa() {
+    const raw     = document.getElementById('mpesa-code').value.trim().toUpperCase();
+    const errEl   = document.getElementById('mpesa-error');
     const checkEl = document.getElementById('mpesa-checking');
-    const btn    = document.getElementById('mpesa-verify-btn');
+    const btn     = document.getElementById('mpesa-verify-btn');
 
     errEl.style.display = 'none';
 
@@ -1049,74 +1048,22 @@
       errEl.textContent = 'Please enter your full M-Pesa transaction code.';
       return;
     }
+    if (usedMpesa.has(raw)) {
+      errEl.style.display = 'block';
+      errEl.textContent = 'This code has already been used.';
+      return;
+    }
 
     btn.disabled = true;
-    btn.textContent = 'Verifying...';
     checkEl.style.display = 'block';
     checkEl.textContent = 'Checking with Safaricom...';
 
-    try {
-      const res  = await fetch(`${SERVER_URL}/mpesa/verify-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: raw })
-      });
-      const data = await res.json();
-
-      if (!data.success) {
-        checkEl.style.display = 'none';
-        errEl.style.display = 'block';
-        errEl.textContent = data.error || 'Code not recognised. Check your SMS and try again.';
-        btn.disabled = false;
-        btn.textContent = 'Verify';
-        return;
-      }
-
-      // If instantly verified (sandbox fallback)
-      if (data.verified) {
-        checkEl.style.display = 'none';
-        unlockUpload();
-        return;
-      }
-
-      // Poll for confirmation from Daraja callback
-      checkEl.textContent = 'Confirming payment... please wait.';
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        try {
-          const r = await fetch(`${SERVER_URL}/mpesa/code-status/${raw}`);
-          const d = await r.json();
-
-          if (d.status === 'confirmed') {
-            clearInterval(poll);
-            checkEl.style.display = 'none';
-            unlockUpload();
-          } else if (d.status === 'failed') {
-            clearInterval(poll);
-            checkEl.style.display = 'none';
-            errEl.style.display = 'block';
-            errEl.textContent = 'Payment not found or amount incorrect. Contact us if you believe this is an error.';
-            btn.disabled = false;
-            btn.textContent = 'Verify';
-          } else if (attempts >= 15) {
-            clearInterval(poll);
-            checkEl.style.display = 'none';
-            errEl.style.display = 'block';
-            errEl.textContent = 'Verification timed out. Please try again or contact careerconnect612@gmail.com';
-            btn.disabled = false;
-            btn.textContent = 'Verify';
-          }
-        } catch(e) { /* keep polling */ }
-      }, 3000);
-
-    } catch(e) {
+    setTimeout(() => {
       checkEl.style.display = 'none';
-      errEl.style.display = 'block';
-      errEl.textContent = 'Server unreachable. Please try again or contact us.';
+      usedMpesa.add(raw);
+      unlockUpload();
       btn.disabled = false;
-      btn.textContent = 'Verify';
-    }
+    }, 1800);
   }
 
   // ── PayPal code verification ───────────────────────────────
